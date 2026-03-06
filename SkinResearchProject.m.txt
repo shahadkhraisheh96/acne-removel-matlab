@@ -1,0 +1,78 @@
+function SkinResearchProject()
+   
+    [file, path] = uigetfile({'*.jpg;*.png;*.jpeg', 'Image Files'});
+    if isequal(file,0), return; end
+    
+    % Intensity Mapping: Converting to double for precision math
+    img = im2double(imread(fullfile(path, file)));
+    
+    % --- 2. GUI DESIGN ---
+    fig = figure('Name', 'Research Lab: Texture Synthesis', ...
+        'MenuBar', 'none', 'Units', 'normalized', 'Position', [0.1 0.1 0.8 0.8]);
+
+    ax_main = axes('Parent', fig, 'Position', [0.05 0.15 0.6 0.75]);
+    h_img = imshow(img, 'Parent', ax_main);
+    title('Dermatological Workspace: Spatial Domain');
+
+    ax_hist = axes('Parent', fig, 'Position', [0.7 0.3 0.25 0.4]);
+    title(ax_hist, 'Spectral Fidelity (Histogram)');
+
+    % --- 3. ROI SEGMENTATION (Ref: Ch 9 - Morphological Processing) ---
+    % Using Masks to define sets A (Target) and B (Source)
+    h_target = drawcircle(ax_main, 'Color', 'r', 'Center', [100, 100], 'Radius', 25);
+    h_source = drawrectangle(ax_main, 'Color', 'g', 'Position', [150, 80, 50, 50]);
+
+    % --- 4. CONTROL INTERFACE ---
+    uicontrol('Style', 'pushbutton', 'String', 'RESTORE SKIN', ...
+        'Units', 'normalized', 'Position', [0.4 0.03 0.2 0.07], 'FontSize', 12, ...
+        'BackgroundColor', [0.1 0.4 0.7], 'ForegroundColor', 'w', ...
+        'Callback', @(src, e) runRestoration(h_target, h_source, h_img, ax_hist));
+end
+
+function runRestoration(h_target, h_source, h_img, ax_hist)
+    % --- 5. DATA EXTRACTION & MASKING (Ref: Ch 9) ---
+    img = get(h_img, 'CData');
+    mask = createMask(h_target); 
+    stats = regionprops(mask, 'BoundingBox');
+    t_box = round(stats.BoundingBox); 
+    s_pos = round(h_source.Position);  
+
+    % Spatial Domain Coordinate Ranges (Ref: Ch 3)
+    r_s = s_pos(2):(s_pos(2)+s_pos(4)); c_s = s_pos(1):(s_pos(1)+s_pos(3));
+    r_t = t_box(2):(t_box(2)+t_box(4)); c_t = t_box(1):(t_box(1)+t_box(3));
+
+    % --- 6. FREQUENCY SEPARATION (Ref: Ch 4 - Frequency Domain) ---
+    src_patch = imresize(img(r_s, c_s, :), [length(r_t), length(c_t)]);
+    trg_patch = img(r_t, c_t, :);
+
+    % Gaussian Smoothing (Ref: Ch 3 Part 2 - Spatial Filters)
+    % High-Pass = Original - Low-Pass
+    src_hp = src_patch - imgaussfilt(src_patch, 1.5); % Captures Pores/Texture
+    trg_lp = imgaussfilt(trg_patch, 4);              % Removes Acne/Noise
+
+    % --- 7. IMAGE RESTORATION (Ref: Ch 5 - Restoration) ---
+    % Modeling the degradation (Acne) and applying reverse texture synthesis
+    alpha = imgaussfilt(double(mask(r_t, c_t)), 6); % Soft-edge blending
+    healed = trg_patch;
+    for c = 1:3
+        % Formula: Target Color (LP) + Source Texture (HP)
+        combined = trg_lp(:,:,c) + src_hp(:,:,c);
+        % Reinserting digital grain to match sensor noise
+        combined = combined + (rand(size(trg_lp(:,:,1)))-0.5)*0.01;
+        % Final Blending
+        healed(:,:,c) = (combined .* alpha) + (trg_patch(:,:,c) .* (1 - alpha));
+    end
+
+    % --- 8. UPDATE DISPLAY & ANALYSIS ---
+    img(r_t, c_t, :) = healed;
+    set(h_img, 'CData', img);
+    
+    % Update Histogram (Ref: Ch 3 Part 1 - Histograms)
+    hold(ax_hist, 'off'); colors = ['r', 'g', 'b'];
+    for i = 1:3
+        [counts, centers] = imhist(healed(:,:,i));
+        plot(ax_hist, centers, counts, 'Color', colors(i), 'LineWidth', 1.5);
+        hold(ax_hist, 'on');
+    end
+    grid(ax_hist, 'on'); title(ax_hist, 'Post-Restoration Histogram');
+end

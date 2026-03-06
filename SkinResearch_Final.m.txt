@@ -1,0 +1,93 @@
+function SkinResearch_Final()
+   
+    % 1. DATA ACQUISITION (Ch 2: Fundamentals)
+    [file, path] = uigetfile({'*.jpg;*.png;*.jpeg', 'Images'});
+    if isequal(file,0), return; end
+    img = im2double(imread(fullfile(path, file)));
+    original = img; % Backup for Before/After comparison
+    
+    % 2. RESEARCH INTERFACE
+    fig = figure('Name', 'Dermatological Analysis Lab', 'MenuBar', 'none', ...
+        'Units', 'normalized', 'Position', [0.1 0.1 0.8 0.8]);
+
+    ax_img = axes('Parent', fig, 'Position', [0.05 0.15 0.6 0.8]);
+    h_display = imshow(img, 'Parent', ax_img);
+    title('Target Identification Area');
+
+    ax_hist = axes('Parent', fig, 'Position', [0.7 0.55 0.25 0.35]);
+    title(ax_hist, 'Statistical Fidelity (Histogram)');
+
+    % 3. ROI SELECTION (Ch 9: Morphology/Masking)
+    h_target = drawcircle(ax_img, 'Color', 'r', 'Center', [100, 100], 'Radius', 20);
+    h_source = drawrectangle(ax_img, 'Color', 'g', 'Position', [150, 80, 40, 40]);
+
+    % 4. PROCESSING CONTROLS
+    uicontrol('Style', 'pushbutton', 'String', 'APPLY RESTORATION', ...
+        'Units', 'normalized', 'Position', [0.15 0.03 0.2 0.07], ...
+        'Callback', @(s,e) processSkin(h_target, h_source, h_display, ax_hist));
+
+    uicontrol('Style', 'pushbutton', 'String', 'EXPORT PDF REPORT', ...
+        'Units', 'normalized', 'Position', [0.4 0.03 0.2 0.07], ...
+        'Callback', @(s,e) exportResearchPDF(original, h_display, ax_hist));
+end
+
+% --- PROCESSING FUNCTION (The Science) ---
+function processSkin(h_t, h_s, h_disp, ax_h)
+    img = get(h_disp, 'CData');
+    mask = createMask(h_t); % ROI Mask (Ch 9)
+    stats = regionprops(mask, 'BoundingBox');
+    t_rect = round(stats.BoundingBox); 
+    s_pos = round(h_s.Position);  
+
+    % Spatial Domain Processing (Ch 3)
+    r_s = s_pos(2):(s_pos(2)+s_pos(4)); c_s = s_pos(1):(s_pos(1)+s_pos(3));
+    r_t = t_rect(2):(t_rect(2)+t_rect(4)); c_t = t_rect(1):(t_rect(1)+t_rect(3));
+
+    src = imresize(img(r_s, c_s, :), [length(r_t), length(c_t)]);
+    trg = img(r_t, c_t, :);
+
+    % FREQUENCY SEPARATION (Ch 4)
+    % Extract Texture (High Pass) and Smooth Color (Low Pass)
+    src_hp = src - imgaussfilt(src, 1.5); 
+    trg_lp = imgaussfilt(trg, 4); 
+    alpha = imgaussfilt(double(mask(r_t, c_t)), 6); % Blending
+
+    % Statistical Reconstruction
+    healed = trg;
+    for c = 1:3
+        % Restoration Formula: Smooth Color + Healthy Detail + Noise Grain
+        combined = trg_lp(:,:,c) + src_hp(:,:,c) + (rand(size(trg_lp(:,:,1)))-0.5)*0.01;
+        healed(:,:,c) = (combined .* alpha) + (trg(:,:,c) .* (1 - alpha));
+    end
+
+    img(r_t, c_t, :) = healed;
+    set(h_disp, 'CData', img);
+    
+    % Update Statistical Graph (Ch 3: Histograms)
+    updateHist(ax_h, healed);
+end
+
+function updateHist(ax, patch)
+    hold(ax, 'off'); colors = ['r', 'g', 'b'];
+    for i = 1:3
+        [counts, centers] = imhist(patch(:,:,i));
+        plot(ax, centers, counts, 'Color', colors(i), 'LineWidth', 1.5);
+        hold(ax, 'on');
+    end
+    title(ax, 'RGB Histogram Analysis');
+end
+
+function exportResearchPDF(orig, h_final, ax_h)
+    retouched = get(h_final, 'CData');
+    rep = figure('Visible', 'off', 'Position', [0 0 1200 400]);
+    subplot(1,3,1); imshow(orig); title('BEFORE');
+    subplot(1,3,2); imshow(retouched); title('AFTER');
+    ax_new = subplot(1,3,3); copyobj(allchild(ax_h), ax_new);
+    title('STATISTICAL ANALYSIS');
+    
+    [f, p] = uiputfile('Skin_Analysis_Report.pdf', 'Save PDF');
+    if isequal(f,0), return; end
+    exportgraphics(rep, fullfile(p, f), 'ContentType', 'vector');
+    close(rep);
+    msgbox('PDF Research Report Exported!');
+end
